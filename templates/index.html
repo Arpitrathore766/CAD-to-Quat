@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CAD to Quaternion</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: #0f0f0f; color: #e0e0e0; padding: 32px; }
+    h1 { font-size: 1.4rem; margin-bottom: 8px; color: #fff; }
+    p.sub { color: #666; font-size: 0.85rem; margin-bottom: 32px; }
+
+    .step { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 6px; padding: 24px; margin-bottom: 20px; }
+    .step h2 { font-size: 0.9rem; color: #888; margin-bottom: 16px; letter-spacing: 0.1em; text-transform: uppercase; }
+
+    label { display: block; font-size: 0.85rem; color: #aaa; margin-bottom: 6px; }
+    input[type="file"], input[type="text"] {
+      width: 100%; padding: 8px 10px; background: #111; border: 1px solid #333;
+      color: #e0e0e0; border-radius: 4px; font-family: monospace; font-size: 0.85rem;
+    }
+    input[type="file"] { cursor: pointer; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+
+    button {
+      padding: 9px 20px; background: #2563eb; color: #fff; border: none;
+      border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 0.85rem;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #333; color: #666; cursor: not-allowed; }
+    button.secondary { background: #333; }
+    button.secondary:hover { background: #444; }
+    button.green { background: #16a34a; }
+    button.green:hover { background: #15803d; }
+
+    .method-toggle { display: flex; gap: 10px; margin-bottom: 16px; }
+    .method-toggle label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: #aaa; font-size: 0.85rem; }
+
+    textarea {
+      width: 100%; height: 200px; background: #111; border: 1px solid #333;
+      color: #ccc; font-family: monospace; font-size: 0.78rem; padding: 10px;
+      border-radius: 4px; resize: vertical;
+    }
+
+    pre {
+      background: #111; border: 1px solid #2a2a2a; border-radius: 4px;
+      padding: 14px; font-size: 0.78rem; color: #7dd3fc; overflow-x: auto;
+      max-height: 320px; overflow-y: auto;
+    }
+
+    .status { font-size: 0.82rem; margin-top: 10px; color: #666; }
+    .status.ok  { color: #4ade80; }
+    .status.err { color: #f87171; }
+
+    .hidden { display: none; }
+    .btn-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <h1>CAD → Approach Vectors</h1>
+  <p class="sub">Upload a mesh + weld JSON → compute torch approach vectors → visualize</p>
+
+  <!-- STEP 1 -->
+  <div class="step">
+    <h2>Step 1 — Upload Files &amp; Analyze</h2>
+    <div class="row">
+      <div>
+        <label>CAD Mesh (.obj)</label>
+        <input type="file" id="objFile" accept=".obj">
+      </div>
+      <div>
+        <label>Weld Data (.json)</label>
+        <input type="file" id="jsonFile" accept=".json">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button id="analyzeBtn" onclick="analyze()">Analyze</button>
+      <span id="analyzeStatus" class="status"></span>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step" id="step2" style="display:none">
+    <h2>Step 2 — Compute Approach Vectors</h2>
+
+    <label style="margin-bottom:10px">Edge Analysis Output (sent to Gemini or computed locally)</label>
+    <textarea id="edgeText" readonly></textarea>
+
+    <div class="method-toggle" style="margin-top:14px">
+      <label><input type="radio" name="method" value="direct" checked> Direct (no API)</label>
+      <label><input type="radio" name="method" value="gemini"> Gemini</label>
+    </div>
+
+    <div id="apiKeyRow" class="hidden" style="margin-bottom:16px">
+      <label>Gemini API Key</label>
+      <input type="text" id="apiKey" placeholder="AIza...">
+    </div>
+
+    <div class="btn-row">
+      <button id="computeBtn" onclick="compute()">Compute Vectors</button>
+      <span id="computeStatus" class="status"></span>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step" id="step3" style="display:none">
+    <h2>Step 3 — Result &amp; Visualize</h2>
+    <pre id="resultJson"></pre>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="green" onclick="visualize()">Open Visualizer</button>
+      <button class="secondary" onclick="copyJson()">Copy JSON</button>
+      <span id="vizStatus" class="status"></span>
+    </div>
+  </div>
+
+<script>
+  let sessionId = null;
+  let edgeText  = null;
+  let vectors   = null;
+
+  document.querySelectorAll('input[name="method"]').forEach(r =>
+    r.addEventListener("change", () => {
+      document.getElementById("apiKeyRow").classList.toggle("hidden", r.value !== "gemini" || !r.checked);
+    })
+  );
+
+  async function analyze() {
+    const obj  = document.getElementById("objFile").files[0];
+    const json = document.getElementById("jsonFile").files[0];
+    if (!obj || !json) { setStatus("analyzeStatus", "Select both files first.", "err"); return; }
+
+    setStatus("analyzeStatus", "Running analysis… (this may take a minute)", "");
+    document.getElementById("analyzeBtn").disabled = true;
+
+    const form = new FormData();
+    form.append("obj_file",  obj);
+    form.append("json_file", json);
+
+    try {
+      const res  = await fetch("/api/analyze", { method: "POST", body: form });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      sessionId = data.session_id;
+      edgeText  = data.edge_text;
+
+      document.getElementById("edgeText").value = edgeText;
+      document.getElementById("step2").style.display = "block";
+      setStatus("analyzeStatus", "Done.", "ok");
+    } catch (e) {
+      setStatus("analyzeStatus", e.message, "err");
+    } finally {
+      document.getElementById("analyzeBtn").disabled = false;
+    }
+  }
+
+  async function compute() {
+    const method = document.querySelector('input[name="method"]:checked').value;
+    const apiKey = document.getElementById("apiKey").value.trim();
+    if (method === "gemini" && !apiKey) { setStatus("computeStatus", "Enter a Gemini API key.", "err"); return; }
+
+    setStatus("computeStatus", "Computing…", "");
+    document.getElementById("computeBtn").disabled = true;
+
+    try {
+      const res  = await fetch("/api/compute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ edge_text: edgeText, method, api_key: apiKey }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      vectors = data.vectors;
+      document.getElementById("resultJson").textContent = JSON.stringify(vectors, null, 2);
+      document.getElementById("step3").style.display = "block";
+      setStatus("computeStatus", "Done.", "ok");
+    } catch (e) {
+      setStatus("computeStatus", e.message, "err");
+    } finally {
+      document.getElementById("computeBtn").disabled = false;
+    }
+  }
+
+  async function visualize() {
+    setStatus("vizStatus", "Launching Open3D…", "");
+    try {
+      const res  = await fetch("/api/visualize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, vectors }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setStatus("vizStatus", "Window opened.", "ok");
+    } catch (e) {
+      setStatus("vizStatus", e.message, "err");
+    }
+  }
+
+  function copyJson() {
+    navigator.clipboard.writeText(JSON.stringify(vectors, null, 2));
+  }
+
+  function setStatus(id, msg, type) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.className = "status" + (type ? " " + type : "");
+  }
+</script>
+</body>
+</html>
