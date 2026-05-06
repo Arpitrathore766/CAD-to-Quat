@@ -26,60 +26,78 @@ EDGE DATA:
 """
 
 
+def _apply_math(air_dir, raw_plates):
+    corrected = [n if np.dot(n := np.array(p), air_dir) >= 0 else -n for p in raw_plates]
+    summed = np.sum(corrected, axis=0)
+    norm = np.linalg.norm(summed)
+    approach = -(summed / norm) if norm > 1e-6 else np.array([0.0, 0.0, -1.0])
+    return [0.0 if abs(v) < 1e-5 else round(float(v), 4) for v in approach]
+
+
 def compute_direct(edge_text):
     """Compute approach vectors with pure Python math, no API needed."""
     edge_data = {}
+    current_edge = current_point = air_dir = raw_plates = None
 
-    pattern = re.compile(
-        r"EDGE: (\S+) \| (START|END)\s+"
-        r"Travel_Dir: (\[.*?\])\s+"
-        r"Guiding_Air_Vector: (\[.*?\])\s+"
-        r"Raw_Plates: (\[.*?\])",
-        re.DOTALL,
-    )
+    for line in edge_text.splitlines():
+        line = line.strip()
+        if line.startswith("EDGE:"):
+            if current_edge and air_dir is not None and raw_plates:
+                edge_data.setdefault(current_edge, {})
+                edge_data[current_edge]["start" if current_point == "START" else "end"] = _apply_math(air_dir, raw_plates)
+            parts = line.split("|")
+            current_edge = parts[0].replace("EDGE:", "").strip()
+            current_point = parts[1].strip()
+            air_dir = raw_plates = None
+        elif line.startswith("Guiding_Air_Vector:"):
+            air_dir = np.array(json.loads(line.split(":", 1)[1].strip()))
+        elif line.startswith("Raw_Plates:"):
+            raw_plates = json.loads(line.split(":", 1)[1].strip())
 
-    for m in pattern.finditer(edge_text):
-        edge_name = m.group(1)
-        point_type = m.group(2)
-        air_dir = np.array(json.loads(m.group(4)))
-        raw_plates = json.loads(m.group(5))
-
-        if not raw_plates:
-            continue
-
-        corrected = []
-        for plate in raw_plates:
-            n = np.array(plate)
-            corrected.append(n if np.dot(n, air_dir) >= 0 else -n)
-
-        summed = np.sum(corrected, axis=0)
-        norm = np.linalg.norm(summed)
-        approach = -(summed / norm) if norm > 1e-6 else np.array([0.0, 0.0, -1.0])
-
-        vec = [0.0 if abs(v) < 1e-5 else round(float(v), 4) for v in approach]
-
-        if edge_name not in edge_data:
-            edge_data[edge_name] = {}
-        edge_data[edge_name]["start" if point_type == "START" else "end"] = vec
+    # flush last block
+    if current_edge and air_dir is not None and raw_plates:
+        edge_data.setdefault(current_edge, {})
+        edge_data[current_edge]["start" if current_point == "START" else "end"] = _apply_math(air_dir, raw_plates)
 
     return edge_data
 
 
 def compute_via_gemini(edge_text, api_key):
+    """
+    Gemini parses the edge text and calls our compute_approach_vector tool
+    for each edge point. We do the math — Gemini does the parsing.
+    """
     import google.generativeai as genai
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash", tools="code_execution")
-    response = model.generate_content(GEMINI_PROMPT + edge_text)
 
-    # Extract JSON from the response text
-    full_text = ""
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text"):
-            full_text += part.text
+    results = {}
 
-    match = re.search(r"```json\s*(.*?)\s*```", full_text, re.DOTALL)
-    if not match:
-        raise ValueError(f"No JSON block found in Gemini response:\n{full_text}")
+    def compute_approach_vector(
+        edge_id: str,
+        point: str,
+        air_dir: list[float],
+        raw_plates: list[list[float]],
+    ) -> str:
+        """
+        Compute the torch approach vector for one weld edge point.
 
-    return json.loads(match.group(1))
+        Args:
+            edge_id: Edge identifier e.g. "edge-30"
+            point: "start" or "end"
+            air_dir: Guiding air direction vector [x, y, z]
+            raw_plates: List of plate normal vectors [[x,y,z], ...]
+        """
+        vec = _apply_math(np.array(air_dir), raw_plates)
+        results.setdefault(edge_id, {})[point] = vec
+        return f"Stored {edge_id}/{point}: {vec}"
+
+    model = genai.GenerativeModel("gemini-2.0-flash", tools=[compute_approach_vector])
+    chat = model.start_chat(enable_automatic_function_calling=True)
+    chat.send_message(
+        "Parse the EDGE data below. For every EDGE block call compute_approach_vector "
+        "with the edge name, point type (start/end lowercase), Guiding_Air_Vector, and Raw_Plates.\n\n"
+        + edge_text
+    )
+
+    return results

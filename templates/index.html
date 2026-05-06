@@ -89,11 +89,6 @@
       <label><input type="radio" name="method" value="gemini"> Gemini</label>
     </div>
 
-    <div id="apiKeyRow" class="hidden" style="margin-bottom:16px">
-      <label>Gemini API Key</label>
-      <input type="text" id="apiKey" placeholder="AIza...">
-    </div>
-
     <div class="btn-row">
       <button id="computeBtn" onclick="compute()">Compute Vectors</button>
       <span id="computeStatus" class="status"></span>
@@ -115,12 +110,6 @@
   let sessionId = null;
   let edgeText  = null;
   let vectors   = null;
-
-  document.querySelectorAll('input[name="method"]').forEach(r =>
-    r.addEventListener("change", () => {
-      document.getElementById("apiKeyRow").classList.toggle("hidden", r.value !== "gemini" || !r.checked);
-    })
-  );
 
   async function analyze() {
     const obj  = document.getElementById("objFile").files[0];
@@ -154,8 +143,6 @@
 
   async function compute() {
     const method = document.querySelector('input[name="method"]:checked').value;
-    const apiKey = document.getElementById("apiKey").value.trim();
-    if (method === "gemini" && !apiKey) { setStatus("computeStatus", "Enter a Gemini API key.", "err"); return; }
 
     setStatus("computeStatus", "Computing…", "");
     document.getElementById("computeBtn").disabled = true;
@@ -164,7 +151,7 @@
       const res  = await fetch("/api/compute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ edge_text: edgeText, method, api_key: apiKey }),
+        body: JSON.stringify({ edge_text: edgeText, method }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);

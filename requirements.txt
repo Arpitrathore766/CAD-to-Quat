@@ -2,3 +2,4 @@ flask>=3.0
 numpy>=1.24
 open3d>=0.18
 google-generativeai>=0.8
+python-dotenv>=1.0

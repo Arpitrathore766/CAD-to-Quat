@@ -4,6 +4,9 @@ import json
 import uuid
 import subprocess
 from flask import Flask, render_template, request, jsonify
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
@@ -40,11 +43,16 @@ def compute():
     data      = request.get_json()
     edge_text = data.get("edge_text", "")
     method    = data.get("method", "direct")
-    api_key   = data.get("api_key", "")
+    api_key   = os.environ.get("GEMINI_API_KEY", "")
 
     try:
         from compute import compute_direct, compute_via_gemini
-        vectors = compute_via_gemini(edge_text, api_key) if method == "gemini" and api_key else compute_direct(edge_text)
+        if method == "gemini":
+            if not api_key:
+                return jsonify({"error": "GEMINI_API_KEY not set in .env"}), 500
+            vectors = compute_via_gemini(edge_text, api_key)
+        else:
+            vectors = compute_direct(edge_text)
         return jsonify({"vectors": vectors})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
