@@ -42,17 +42,14 @@ def analyze():
 def compute():
     data      = request.get_json()
     edge_text = data.get("edge_text", "")
-    method    = data.get("method", "direct")
     api_key   = os.environ.get("GEMINI_API_KEY", "")
 
+    if not api_key:
+        return jsonify({"error": "GEMINI_API_KEY not set in .env"}), 500
+
     try:
-        from compute import compute_direct, compute_via_gemini
-        if method == "gemini":
-            if not api_key:
-                return jsonify({"error": "GEMINI_API_KEY not set in .env"}), 500
-            vectors = compute_via_gemini(edge_text, api_key)
-        else:
-            vectors = compute_direct(edge_text)
+        from compute import compute_via_gemini
+        vectors = compute_via_gemini(edge_text, api_key)
         return jsonify({"vectors": vectors})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

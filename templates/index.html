@@ -31,9 +31,6 @@
     button.green { background: #16a34a; }
     button.green:hover { background: #15803d; }
 
-    .method-toggle { display: flex; gap: 10px; margin-bottom: 16px; }
-    .method-toggle label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: #aaa; font-size: 0.85rem; }
-
     textarea {
       width: 100%; height: 200px; background: #111; border: 1px solid #333;
       color: #ccc; font-family: monospace; font-size: 0.78rem; padding: 10px;
@@ -81,15 +78,10 @@
   <div class="step" id="step2" style="display:none">
     <h2>Step 2 — Compute Approach Vectors</h2>
 
-    <label style="margin-bottom:10px">Edge Analysis Output (sent to Gemini or computed locally)</label>
+    <label style="margin-bottom:10px">Edge Analysis Output (sent to Gemini)</label>
     <textarea id="edgeText" readonly></textarea>
 
-    <div class="method-toggle" style="margin-top:14px">
-      <label><input type="radio" name="method" value="direct" checked> Direct (no API)</label>
-      <label><input type="radio" name="method" value="gemini"> Gemini</label>
-    </div>
-
-    <div class="btn-row">
+    <div class="btn-row" style="margin-top:14px">
       <button id="computeBtn" onclick="compute()">Compute Vectors</button>
       <span id="computeStatus" class="status"></span>
     </div>
@@ -142,16 +134,14 @@
   }
 
   async function compute() {
-    const method = document.querySelector('input[name="method"]:checked').value;
-
-    setStatus("computeStatus", "Computing…", "");
+    setStatus("computeStatus", "Sending to Gemini…", "");
     document.getElementById("computeBtn").disabled = true;
 
     try {
       const res  = await fetch("/api/compute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ edge_text: edgeText, method }),
+        body: JSON.stringify({ edge_text: edgeText }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
